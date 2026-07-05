@@ -275,19 +275,19 @@ Table~\ref{tab:scale} compares BC (per-scale trained) at $v=20$\,m/s across swar
 \caption{Scale comparison: BC performance at $v=20$\,m/s.}
 \label{tab:scale}
 \centering
-\begin{tabular}{cccc}
+\begin{tabular}{ccccc}
 \toprule
-$N$ & $\bar{P}_{\text{int}}$ & Inference (s) & Channels/UAV \\
+$N$ & $\bar{P}_{\text{int}}$ & Acc.\ (\%) & Inference (s) & Ch/UAV \\
 \midrule
-10 & 0.062 & 0.33 & 1.0 \\
-20 & 0.277 & 1.56 & 0.5 \\
-30 & -- & -- & 0.33 \\
-50 & -- & -- & 0.20 \\
+10 & 0.062 & 97.8 & 0.33 & 1.0 \\
+20 & 0.277 & 85.0 & 1.56 & 0.5 \\
+30 & 0.399 & 91.6 & 3.97 & 0.33 \\
+50 & 0.603 & 75.8 & 15.8 & 0.20 \\
 \bottomrule
 \end{tabular}
 \end{table}
 
-As $N$ increases beyond the number of orthogonal channels ($n_{\text{ch}}=10$), frequency reuse becomes unavoidable. At $N=20$, each channel is shared by 2 UAVs on average, increasing co-channel interference. The interference probability increases from 0.062 ($N=10$) to 0.277 ($N=20$), reflecting this fundamental spectral congestion. Importantly, the inference time scales linearly ($\sim$0.15\,s per UAV), maintaining real-time feasibility.
+As $N$ increases beyond the number of orthogonal channels ($n_{\text{ch}}=10$), frequency reuse becomes unavoidable. At $N=50$, each channel is shared by 5 UAVs on average, making co-channel interference fundamentally harder to avoid. The interference probability increases accordingly: from 0.062 ($N=10$) to 0.603 ($N=50$). The BC accuracy degrades at $N=50$ (75.8\%) due to the increased complexity of the teacher's decisions in dense scenarios and limited training data (25,000 samples). Importantly, the inference time scales linearly ($\sim$0.32\,s per UAV), maintaining real-time feasibility even at $N=50$ (16\,s for 50 slots).
 
 \subsection{Zero-Shot Cross-Scale Generalization}
 
