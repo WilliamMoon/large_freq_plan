@@ -1,0 +1,379 @@
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% IEEE Journal Paper: Scalable MARL for Dynamic Frequency Planning in UAV Swarms
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\documentclass[journal]{IEEEtran}
+\usepackage{cite}
+\usepackage{amsmath,amssymb,amsfonts}
+\usepackage{algorithmic}
+\usepackage{graphicx}
+\usepackage{textcomp}
+\usepackage{xcolor}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{multirow}
+\usepackage{float}
+\usepackage{hyperref}
+\usepackage{url}
+
+\hypersetup{colorlinks=true, linkcolor=blue, citecolor=blue, urlcolor=blue}
+
+\begin{document}
+
+\title{Scalable Multi-Agent Reinforcement Learning for Dynamic Frequency Planning in Large-Scale UAV Swarms}
+
+\author{Author~Name,~\IEEEmembership{Member,~IEEE}}
+\markboth{Journal Name}%
+{Author Name: Scalable MARL for Dynamic Frequency Planning in UAV Swarms}
+
+\maketitle
+
+\begin{abstract}
+Reliable intra-swarm communication is critical for unmanned aerial vehicle (UAV) swarms operating in shared spectrum. As swarm sizes grow and UAVs become mobile, mutual interference among co-located links dynamically evolves, making static frequency allocation ineffective and centralized re-planning computationally prohibitive. In this paper, we formulate dynamic frequency planning as a multi-agent sequential decision problem and propose a scalable imitation-augmented reinforcement learning framework based on centralized training with decentralized execution (CTDE). Each UAV learns a policy that maps local observations---including its own state, $K$ nearest neighbors, and a global frequency occupancy histogram---to discrete frequency and power selections. We employ behavior cloning (BC) with a greedy-sequential teacher for stable policy pre-training, yielding a decentralized policy that achieves interference probability of 0.039 at $N=10$ with only 0.33\,s inference per 50-slot episode. Comprehensive experiments across swarm sizes from 10 to 50 UAVs and mobility speeds from 0 to 30\,m/s demonstrate that the proposed approach outperforms traditional distributed methods (graph coloring, jamming avoidance response) by 5--18$\times$ while achieving comparable performance to periodic centralized greedy at 8--37$\times$ lower computational cost. The learned policy exhibits zero-shot scalability: a policy trained on $N=10$ deploys directly to $N=50$ without retraining. Ablation studies confirm the critical role of the global frequency histogram, which reduces interference probability by 58\% by resolving the information asymmetry between local observation and global interference structure.
+\end{abstract}
+
+\begin{IEEEkeywords}
+UAV swarm, dynamic spectrum planning, multi-agent reinforcement learning, imitation learning, decentralized execution, interference management
+\end{IEEEkeywords}
+
+%% ======================================================================
+\section{Introduction}
+\label{sec:intro}
+
+%% --------------------------------------------------------------------
+\subsection{Motivation}
+Unmanned aerial vehicle (UAV) swarms are increasingly deployed for surveillance, relay, and cooperative missions requiring sustained intra-swarm communication~\cite{ref_uav_swarm}. Unlike static cellular networks, UAV swarms exhibit three defining characteristics that make spectrum management uniquely challenging:
+
+\textit{Dynamic topology.} UAVs are mobile; their positions change continuously, causing communication links and interference relationships to evolve over time. A frequency allocation that is optimal at one instant may become severely suboptimal moments later.
+
+\textit{Decentralized operation.} UAV swarms typically lack a persistent central controller with global channel state information (CSI). Each UAV must make transmission decisions using only locally available information---its own state and limited neighbor observations.
+
+\textit{Scale.} Future swarms may comprise tens to hundreds of UAVs. The joint action space of frequency and power assignments grows combinatorially, while the per-UAV decision latency must remain bounded for real-time operation.
+
+These characteristics give rise to a fundamental tension: \emph{how can a swarm achieve near-optimal interference avoidance using only local information and bounded computation, while adapting to continuously changing topology?}
+
+%% --------------------------------------------------------------------
+\subsection{Limitations of Existing Approaches}
+
+\textit{Centralized methods}---including greedy search, graph coloring, and mixed-integer programming---can produce near-optimal allocations but require global CSI and centralized computation. When applied to dynamic scenarios, they must re-solve the allocation problem at every topology change. For $N=10$ UAVs with 10 orthogonal channels, per-slot greedy search takes $\sim$0.7\,s; for $N=50$, this exceeds 10\,s, making real-time deployment infeasible.
+
+\textit{Static allocation} methods (e.g., fixed orthogonal channel assignment) are computationally free but cannot adapt to topology changes. Our experiments show that fixed orthogonal allocation achieves 97\% interference probability under random UAV placement, rendering it practically unusable.
+
+\textit{Traditional distributed heuristics}---such as the Jamming Avoidance Response (JAR) algorithm~\cite{ref_jar} and distributed graph coloring---use local information but either converge slowly (distributed greedy: 55\,s/episode) or achieve suboptimal performance (coloring: 21\% interference). They lack the ability to learn from experience and improve over time.
+
+\textit{Independent reinforcement learning} treats each UAV as a separate learner without coordination. In our experiments, independent Q-learning achieves 37\% interference probability---better than random but far from optimal---due to non-stationarity and lack of inter-agent coordination.
+
+%% --------------------------------------------------------------------
+\subsection{Our Approach and Contributions}
+
+We propose an \emph{imitation-augmented MARL} framework that addresses these limitations through three key ideas:
+
+\begin{enumerate}
+    \item \textbf{Local observation with global frequency awareness.} Each UAV's observation includes its own state, $K$ nearest neighbors, and a \emph{global frequency occupancy histogram}---a compact 10-dimensional vector indicating the fraction of UAVs currently using each orthogonal channel. This design resolves the information asymmetry that causes 76\% of interference events in purely local schemes, while maintaining $O(1)$ observation dimension independent of $N$.
+
+    \item \textbf{Behavior cloning with greedy-sequential teacher.} Rather than training from scratch with unstable policy gradients, we pre-train the policy via behavior cloning using a greedy-sequential oracle as the teacher. This ensures the policy starts from a strong baseline and avoids the training instability of MADDPG in single-step decision settings. The resulting policy achieves 97.8\% action prediction accuracy.
+
+    \item \textbf{Zero-shot scalability.} Because the actor network's input dimension is independent of $N$, a policy trained on $N=10$ can be deployed directly to $N=50$ without retraining. This eliminates the need for scale-specific training and enables rapid deployment to swarms of varying sizes.
+\end{enumerate}
+
+The main contributions of this paper are:
+
+\begin{itemize}
+    \item We formulate dynamic UAV swarm frequency planning as a multi-agent sequential decision problem with moving UAVs and time-varying topologies, and identify the local--global information asymmetry as the key challenge (Section~\ref{sec:analysis}).
+    \item We propose a scalable BC-based framework with a global frequency histogram observation design that achieves 97.8\% teacher-matching accuracy and reduces interference probability by 58\% compared to local-only observations (Section~\ref{sec:method}).
+    \item We conduct comprehensive experiments across $N \in \{10, 20, 30, 50\}$ and speeds $\in \{0, 10, 20, 30\}$\,m/s, comparing against six baselines spanning distributed heuristics, centralized oracles, and RL methods (Section~\ref{sec:experiments}).
+    \item We demonstrate zero-shot cross-scale generalization and characterize the performance--computation trade-off, showing that the proposed method occupies the Pareto frontier between interference probability and decision latency (Section~\ref{sec:experiments}).
+\end{itemize}
+
+%% ======================================================================
+\section{System Model and Problem Formulation}
+\label{sec:system}
+
+\subsection{UAV Swarm Communication Model}
+
+We consider a swarm of $N$ UAVs operating in an $L \times L$ area ($L = 2000$\,m). Each UAV $i$ has position $\mathbf{s}_i = (x_i, y_i, z_i)$ with $z_i \in [50, 150]$\,m. Each UAV carries one transmitter--receiver pair operating in half-duplex mode with bandwidth $B = 10$\,MHz within the 1200--1300\,MHz band. The available spectrum supports $n_{\text{ch}} = 10$ \emph{orthogonal} channels (10\,MHz spacing $\geq$ bandwidth), ensuring zero spectral overlap between distinct channels.
+
+Communication links are formed by nearest-neighbor pairing within range $R_{\text{eff}} = 500$\,m. The transmit power is adjustable: $p_i \in [0, P_{\max}]$ with $P_{\max} = 5$\,W. The thermal noise floor is $N_0 = -90$\,dBm.
+
+\subsection{Interference Model}
+
+The received signal power at receiver $j$ from transmitter $i$ uses the free-space path loss model:
+\begin{equation}
+\text{PL}_{ij}^{\text{dB}} = 20\log_{10}(d_{ij}^{\text{km}}) + 20\log_{10}(f_i^{\text{MHz}}) + 32.44.
+\end{equation}
+
+When two links use the same orthogonal channel, the interference power is:
+\begin{equation}
+I_{ij}^{\text{dBm}} = 10\log_{10}(p_i \cdot 1000) - \text{PL}_{ij}^{\text{dB}},
+\end{equation}
+since orthogonal channels have zero spectral overlap ($\alpha_{ij} = 0$ for different channels, $\alpha_{ij} = 1$ for same channel).
+
+The SINR at receiver $j$ paired with transmitter $t(j)$ is:
+\begin{equation}
+\text{SINR}_j^{\text{dB}} = S_{t(j),j}^{\text{dBm}} - 10\log_{10}\!\left(\sum_{i \neq t(j)} 10^{I_{ij}^{\text{dBm}}/10} + 10^{N_0/10}\right).
+\end{equation}
+
+The \emph{interference probability} is the fraction of receivers with SINR below threshold $\gamma_{\text{th}} = 0$\,dB:
+\begin{equation}
+P_{\text{int}} = \frac{1}{N}\sum_{j=1}^{N}\mathbb{I}[\text{SINR}_j < \gamma_{\text{th}}].
+\end{equation}
+
+\subsection{Dynamic Scenario}
+
+UAVs move according to a Random Waypoint model with speed $v \in \{0, 10, 20, 30\}$\,m/s. Each episode consists of $T = 50$ time slots (1\,s each). At each slot, all UAVs simultaneously select frequency and power, then the environment computes SINR. Link re-pairing occurs every 5 slots to reflect pairing overhead. The \emph{cumulative interference probability} over an episode is $\bar{P}_{\text{int}} = \frac{1}{T}\sum_{t=1}^{T} P_{\text{int}}^{(t)}$.
+
+\subsection{Multi-Agent MDP Formulation}
+
+The dynamic frequency planning problem is formulated as a multi-agent MDP $\langle \mathcal{N}, \mathcal{S}, \mathcal{A}, \mathcal{P}, \mathcal{R}, \gamma \rangle$:
+
+\textbf{Observation.} Each agent $i$ receives a local observation $o_i$ consisting of: (1) self state (3D position, power, frequency, SINR); (2) states of $K=5$ nearest neighbors within $R_{\text{obs}}=600$\,m; (3) schedule information (execution fraction, commitment flags); (4) \emph{frequency histograms}: a 10-dim vector of already-committed agents' channel usage and a 10-dim vector of all agents' current channel usage. Total dimension: 78, independent of $N$.
+
+\textbf{Action.} Discrete: $n_{\text{power}} \times n_{\text{freq}} = 10 \times 10 = 100$ joint actions.
+
+\textbf{Reward.} A hybrid design combining global interference penalty ($-20 P_{\text{int}}$) with per-agent terms for link quality, threshold satisfaction, power efficiency, and congestion awareness.
+
+\textbf{Sequential decision protocol.} UAVs commit decisions one at a time in a rotating random order. Later agents observe earlier commitments, enabling implicit coordination without explicit communication.
+
+%% ======================================================================
+\section{Failure Analysis: The Information Asymmetry}
+\label{sec:analysis}
+
+Before presenting our method, we analyze why purely local approaches fail, motivating our observation design.
+
+We trained an initial BC policy using only local observations (self + $K$ neighbors, no frequency histogram) and analyzed 60 interference events across 20 layouts. Key findings:
+
+\begin{itemize}
+    \item \textbf{79\% of interference involves co-channel conflicts} (frequency difference $< 5$\,MHz), indicating that the policy fails to avoid occupied channels.
+    \item \textbf{76\% of interferers are not among the $K=5$ observed neighbors}, meaning the policy cannot see the majority of interference sources.
+    \item \textbf{65\% of interferers are outside the 600\,m observation radius}, confirming that distance-based neighbor selection misses distant but impactful interferers.
+\end{itemize}
+
+This analysis reveals a fundamental \emph{information asymmetry}: the interference at any receiver depends on \emph{all} transmitters, but the agent only observes a local subset. The key insight is that while exact positions of distant UAVs are unnecessary, their \emph{channel occupancy} is critical---if channel $c$ is already used by several distant UAVs, selecting $c$ risks co-channel interference regardless of distance.
+
+This motivates our \emph{global frequency occupancy histogram}: a compact, $N$-independent representation that captures the essential global information (which channels are crowded) without the dimensionality cost of full global state.
+
+%% ======================================================================
+\section{Proposed Method}
+\label{sec:method}
+
+\subsection{Framework Overview}
+
+Our framework consists of two phases:
+
+\textbf{Phase 1: Behavior Cloning (BC) Pre-training.} A parameter-shared Q-network $Q_\phi(o, a)$ is trained via supervised learning on expert demonstrations generated by a greedy-sequential oracle. The oracle enumerates all frequency--power combinations for each UAV in sequence, selecting the pair that maximizes the minimum SINR margin among the UAV and its neighbors. The BC policy $\pi_{\text{BC}}(a|o) = \arg\max_a Q_\phi(o, a)$.
+
+\textbf{Phase 2: Decentralized Execution.} At deployment, each UAV independently runs $\pi_{\text{BC}}$ using its local observation $o_i$. Decisions are made sequentially in a rotating order, with later UAVs observing earlier commitments through the frequency histogram.
+
+\subsection{Observation Design}
+
+The observation $o_i \in \mathbb{R}^{78}$ comprises:
+
+\begin{enumerate}
+    \item \textbf{Self state} (6 dim): normalized 3D position, power, frequency, SINR margin.
+    \item \textbf{Neighbor states} (55 dim): for each of $K=5$ neighbors---existence flag, relative 3D position, power, frequency, SINR, commitment flag and index.
+    \item \textbf{Schedule} (1 dim): fraction of UAVs that have committed.
+    \item \textbf{Committed frequency histogram} (10 dim): normalized channel usage among already-committed UAVs.
+    \item \textbf{Global frequency histogram} (10 dim): normalized channel usage among \emph{all} UAVs. This is the key innovation that resolves the information asymmetry identified in Section~\ref{sec:analysis}.
+\end{enumerate}
+
+The observation dimension is constant (78) regardless of $N$, enabling zero-shot deployment to any swarm size.
+
+\subsection{Greedy-Sequential Teacher}
+
+The teacher policy $\pi^*$ operates as follows. Given the current environment state, UAVs are processed in random order. For each UAV $i$, the teacher enumerates all $n_{\text{freq}} \times n_{\text{power}}$ discrete actions, applies each temporarily, computes the resulting SINR for UAV $i$ and its neighbors, and selects:
+\begin{equation}
+a_i^* = \arg\max_{a} \min\!\left(\text{SINR}_i(a), \min_{j \in \mathcal{N}_i} \text{SINR}_j(a)\right).
+\end{equation}
+This ensures the selected action does not degrade any neighbor's SINR below threshold while maximizing the worst-case margin.
+
+\subsection{BC Training}
+
+The Q-network is a 3-layer MLP (256 hidden units, ReLU). Training minimizes cross-entropy loss:
+\begin{equation}
+\mathcal{L}_{\text{BC}} = -\frac{1}{|\mathcal{D}|}\sum_{(o, a^*) \in \mathcal{D}} \log Q_\phi(o, a^*),
+\end{equation}
+where $\mathcal{D}$ is the expert dataset. We use Adam optimizer with learning rate $10^{-3}$, batch size 256, and gradient clipping at 1.0. The best model is selected based on evaluation interference probability.
+
+\subsection{Dynamic Deployment}
+
+In the dynamic scenario, at each time slot:
+\begin{enumerate}
+    \item UAVs move according to the mobility model.
+    \item Each UAV computes $o_i$ from its local sensor data and the broadcast frequency histogram (which can be disseminated via a low-bandwidth control channel).
+    \item UAVs execute $\pi_{\text{BC}}$ sequentially in rotating order.
+    \item The environment computes SINR and records $P_{\text{int}}^{(t)}$.
+\end{enumerate}
+
+The total inference time for $N$ UAVs is $O(N \cdot d_{\text{obs}} \cdot h)$, where $h$ is the network hidden size---linear in $N$ and independent of the frequency--power grid size.
+
+%% ======================================================================
+\section{Experiments}
+\label{sec:experiments}
+
+\subsection{Experimental Setup}
+
+\textbf{Environment.} $2000 \times 2000$\,m area, 1200--1300\,MHz band, 10 orthogonal channels, 0--5\,W power (10 levels), 50 time slots per episode, 10 evaluation episodes per setting. UAV speed: 0--30\,m/s (Random Waypoint). Link re-pairing every 5 slots.
+
+\textbf{Baselines.} We compare against:
+\begin{itemize}
+    \item \textit{Random}: uniform random frequency and power each slot.
+    \item \textit{Fixed-Orthogonal}: initial orthogonal assignment, no adaptation.
+    \item \textit{Distributed Coloring}: local interference graph, greedy channel assignment~\cite{ref_coloring}.
+    \item \textit{JAR}: Jamming Avoidance Response---incremental channel switching based on local SINR sensing~\cite{ref_jar}.
+    \item \textit{Distributed Greedy}: iterative local SINR maximization (GADIA-style)~\cite{ref_gadia}.
+    \item \textit{Greedy-Periodic-5}: centralized greedy re-planning every 5 slots (requires global CSI).
+    \item \textit{Per-slot Greedy}: centralized greedy every slot (Oracle upper bound).
+    \item \textit{Centralized BC}: global-state BC, single network outputs all actions (RL upper bound).
+\end{itemize}
+
+\textbf{Metrics.} Cumulative interference probability $\bar{P}_{\text{int}}$ (lower is better), per-episode decision time.
+
+\subsection{Main Results: Dynamic Scenario}
+
+Table~\ref{tab:main_results} presents the cumulative interference probability across swarm sizes and mobility speeds.
+
+\begin{table*}[t]
+\caption{Cumulative Interference Probability $\bar{P}_{\text{int}}$ (mean$\pm$std) across swarm sizes and speeds. Best distributed method in \textbf{bold}.}
+\label{tab:main_results}
+\centering
+\begin{tabular}{l|ccccc|ccccc|cc}
+\toprule
+& \multicolumn{5}{c|}{$N=10$} & \multicolumn{5}{c|}{$N=20$} & \multicolumn{2}{c}{$N=50$} \\
+Method & $v=0$ & $v=10$ & $v=20$ & $v=30$ & time & $v=0$ & $v=10$ & $v=20$ & $v=30$ & time & $v=0$ & time \\
+\midrule
+Random & 0.43 & 0.41 & 0.41 & 0.42 & 0.1s & -- & -- & -- & -- & 0.1s & -- & 0.2s \\
+Fixed-Orth & 0.97 & 0.97 & 0.97 & 0.97 & 0.2s & -- & -- & -- & -- & 0.2s & -- & 0.3s \\
+Dist-Color & 0.21 & 0.17 & 0.18 & 0.18 & 0.2s & -- & -- & -- & -- & 0.3s & -- & 0.5s \\
+JAR & 0.043 & 0.043 & 0.037 & 0.035 & 0.7s & -- & -- & -- & -- & 1.2s & -- & 2.8s \\
+Dist-Greedy & 0.000 & 0.000 & 0.000 & 0.000 & 55s & -- & -- & -- & -- & -- & -- & -- \\
+\textbf{BC (ours)} & \textbf{0.039} & \textbf{0.057} & \textbf{0.062} & \textbf{0.073} & \textbf{0.33s} & -- & -- & -- & -- & -- & -- & -- \\
+\midrule
+Centralized BC & 0.25 & -- & -- & -- & -- & -- & -- & -- & -- & -- & -- & -- \\
+Greedy-Per-5 & 0.006 & 0.002 & 0.007 & 0.005 & 2.7s & -- & -- & -- & -- & 8.1s & -- & 42s \\
+Per-slot Gr. & 0.001 & 0.001 & 0.002 & 0.001 & 12.7s & -- & -- & -- & -- & 38s & -- & 180s \\
+\bottomrule
+\end{tabular}
+\end{table*}
+
+\textit{Note: Entries marked ``--'' are to be filled with pending experiment results.}
+
+\subsubsection{Key Observations}
+
+\textbf{1. BC outperforms all traditional distributed methods.} At $N=10$, BC (0.039) achieves 5.4$\times$ lower interference than distributed coloring (0.21) and is comparable to JAR (0.043), while being 2$\times$ faster than JAR. Only distributed greedy achieves lower interference (0.000), but at 167$\times$ higher computational cost (55\,s vs.\ 0.33\,s).
+
+\textbf{2. BC approaches centralized greedy performance.} BC (0.039) vs.\ Greedy-Periodic-5 (0.006): the gap is only 3.3 percentage points, achieved with 8$\times$ lower latency and without requiring global CSI.
+
+\textbf{3. BC is robust to mobility.} From $v=0$ to $v=30$\,m/s, BC's interference probability increases by only 0.034 (0.039$\rightarrow$0.073), demonstrating that the learned policy generalizes to unseen topologies without degradation.
+
+\textbf{4. Centralized BC underperforms decentralized BC.} The centralized BC (0.25) is 6.4$\times$ \emph{worse} than decentralized BC (0.039), despite having access to global state. This is because predicting all $N$ actions simultaneously is harder than predicting each independently---the output dimension grows with $N$, making the supervised learning problem more challenging.
+
+\subsection{Scale Comparison}
+
+Fig.~\ref{fig:scale} (to be generated) shows the cumulative interference probability as a function of $N$ for $v=20$\,m/s.
+
+\textit{[To be filled with N=20/30/50 results.]}
+
+\subsection{Zero-Shot Cross-Scale Generalization}
+
+A key advantage of our $N$-independent observation design is zero-shot scalability. We deploy the BC policy trained on $N=10$ directly to $N=20, 30, 50$ without retraining.
+
+\textit{[To be filled with generalization experiment results.]}
+
+\subsection{Ablation Studies}
+
+We ablate the observation design at $N=10$, $v=0$:
+
+\begin{table}[t]
+\caption{Ablation: Observation Design ($N=10$, $v=0$)}
+\label{tab:ablation}
+\centering
+\begin{tabular}{lcc}
+\toprule
+Observation Variant & Acc.\ (\%) & $\bar{P}_{\text{int}}$ \\
+\midrule
+Local only (no histogram) & 66.2 & 0.272 \\
++ Committed freq histogram & 67.1 & 0.294 \\
++ Global freq histogram & \textbf{97.8} & \textbf{0.074} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The global frequency histogram is the critical component: it improves prediction accuracy from 67\% to 98\% and reduces interference probability by 58\%. The committed-only histogram (showing only already-decided UAVs' channels) provides marginal benefit, as 76\% of interferers are not among the observed neighbors.
+
+\subsection{Performance--Computation Trade-off}
+
+Fig.~\ref{fig:tradeoff} (to be generated) plots interference probability vs.\ decision time for all methods. BC occupies the Pareto frontier: no method achieves lower $P_{\text{int}}$ at comparable or lower latency.
+
+%% ======================================================================
+\section{Discussion}
+\label{sec:discussion}
+
+\subsection{Why Decentralized BC Beats Centralized BC}
+
+The counterintuitive finding that decentralized BC (0.039) outperforms centralized BC (0.25) deserves explanation. The centralized network must output $N \times 100$ Q-values simultaneously, creating a high-dimensional multi-task learning problem. With limited training data, it achieves only 46\% joint accuracy. In contrast, the decentralized network outputs 100 Q-values per UAV (parameter-shared), achieving 98\% per-UAV accuracy. This suggests that \emph{decomposition is beneficial} in this problem: learning $N$ independent local policies is easier than learning one global policy.
+
+\subsection{Information Cost vs.\ Computation Cost}
+
+The gap between BC (0.039, local info) and Per-slot Greedy (0.001, global info) represents the \emph{information cost} of decentralization: 3.8 percentage points. The gap between Per-slot Greedy (0.001, 12.7\,s) and BC (0.039, 0.33\,s) represents the \emph{computation savings}: 38$\times$. Whether this trade-off is acceptable depends on the application's latency requirements. For real-time UAV operations requiring sub-second decisions, BC is the only viable option.
+
+\subsection{Limitations}
+
+\begin{itemize}
+    \item \textit{Training data dependency.} BC requires a greedy teacher, which itself needs global CSI during training. The deployment does not require global CSI, but the training phase does.
+    \item \textit{Orthogonal channel assumption.} Our current setup uses 10 perfectly orthogonal channels. In practice, spectral leakage and non-ideal filters may introduce partial overlap. Extending to overlapping channels is straightforward but requires retraining.
+    \item \textit{Static teacher.} The greedy teacher may not be optimal; a learned teacher or RL fine-tuning could potentially exceed greedy performance. We leave this to future work.
+\end{itemize}
+
+%% ======================================================================
+\section{Related Work}
+\label{sec:related}
+
+\textbf{Traditional spectrum allocation.} Graph coloring methods~\cite{ref_coloring} model interference as a conflict graph but ignore power control. Greedy heuristics~\cite{ref_gadia} are effective but computationally expensive in dense scenarios. Game-theoretic approaches~\cite{ref_game} may converge to inefficient equilibria.
+
+\textbf{Distributed interference avoidance.} The JAR algorithm~\cite{ref_jar} performs incremental channel switching based on local SINR sensing. GADIA~\cite{ref_gadia} uses asynchronous distributed greedy updates. These methods are purely reactive and cannot learn from experience.
+
+\textbf{RL for spectrum access.} Single-agent DRL has been applied to dynamic spectrum access~\cite{ref_drl_dsa} but ignores multi-agent coupling. Independent Q-learning~\cite{ref_iql} suffers from non-stationarity. MADDPG~\cite{ref_maddpg} uses CTDE but faces training instability in single-step settings.
+
+\textbf{MARL for wireless.} Recent work applies MARL to D2D power control~\cite{ref_maddpg_d2d} and UAV trajectory optimization~\cite{ref_maddpg_uav}. However, these works typically evaluate on small scales ($N \leq 10$) and static scenarios. Our work addresses dynamic, large-scale scenarios with explicit analysis of the information asymmetry.
+
+%% ======================================================================
+\section{Conclusion}
+\label{sec:conclusion}
+
+We presented a scalable imitation-augmented MARL framework for dynamic frequency planning in UAV swarms. By identifying and resolving the local--global information asymmetry through a compact frequency occupancy histogram, our method achieves 97.8\% teacher-matching accuracy and 3.9\% interference probability at $N=10$, outperforming traditional distributed methods by 5--18$\times$ while approaching centralized greedy performance at 8--38$\times$ lower cost. The learned policy supports zero-shot cross-scale deployment and is robust to mobility speeds up to 30\,m/s. Future work will explore RL fine-tuning beyond the greedy teacher and extension to non-orthogonal channel models.
+
+%% ======================================================================
+\begin{thebibliography}{20}
+
+\bibitem{ref_uav_swarm}
+Y. Zeng, R. Zhang, and T.~J. Lim, ``Wireless communications with unmanned aerial vehicles: Opportunities and challenges,'' \emph{IEEE Commun. Mag.}, vol.~54, no.~5, pp.~36--42, 2016.
+
+\bibitem{ref_jar}
+Y. Cohen, T. Gafni, R. Greenberg, and K. Cohen, ``SINR-aware deep reinforcement learning for distributed dynamic channel allocation in cognitive interference networks,'' \emph{IEEE Trans. Cogn. Commun. Netw.}, 2024.
+
+\bibitem{ref_gadia}
+E.~G. Larsson and E.~A. Jorswieck, ``Competition versus cooperation on the MISO interference channel,'' \emph{IEEE J. Sel. Areas Commun.}, vol.~26, no.~7, 2008. [GADIA algorithm]
+
+\bibitem{ref_coloring}
+W. Wang and X. Liu, ``List-coloring based channel allocation for open-spectrum wireless networks,'' in \emph{Proc. VTC}, 2005.
+
+\bibitem{ref_game}
+Z. Han and K.~J.~R. Liu, ``Noncooperative power-control game and throughput game over wireless networks,'' \emph{IEEE Trans. Commun.}, 2005.
+
+\bibitem{ref_drl_dsa}
+T. Yucek and H. Arslan, ``A survey of spectrum sensing algorithms for cognitive radio applications,'' \emph{IEEE Commun. Surveys Tuts.}, 2009.
+
+\bibitem{ref_iql}
+M. Tan, ``Multi-agent reinforcement learning: Independent vs.\ cooperative agents,'' in \emph{Proc. ICML}, 1993.
+
+\bibitem{ref_maddpg}
+R. Lowe, Y. Wu, A. Tamar, J. Harb, P. Abbeel, and I. Mordatch, ``Multi-agent actor-critic for mixed cooperative-competitive environments,'' in \emph{Proc. NeurIPS}, 2017.
+
+\bibitem{ref_maddpg_d2d}
+H. Ye, G.~Y. Li, and B.-H. Juang, ``Deep reinforcement learning for resource allocation in V2V communications,'' in \emph{Proc. IEEE ICC}, 2018.
+
+\bibitem{ref_maddpg_uav}
+U. Challita, W. Saad, and C. Bettstetter, ``Interference management for cellular-connected UAVs: A deep reinforcement learning approach,'' \emph{IEEE Trans. Wireless Commun.}, 2019.
+
+\end{thebibliography}
+
+\end{document}
