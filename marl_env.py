@@ -128,9 +128,11 @@ class MultiAgentEnv:
                 float(np.clip(executed_fraction, 0.0, 1.0)),
             ])
             # 已执行 agent 的频率使用直方图（归一化）
-            # 让后续 agent 能看到前序决策的频率分布，做更好的频率规避
             freq_hist = self._compute_freq_histogram()
             obs.extend(freq_hist.tolist())
+            # 全场景频率占用直方图（让 agent 能看到远处干扰源的频率分布）
+            all_freq_hist = self._compute_all_freq_histogram()
+            obs.extend(all_freq_hist.tolist())
         
         # 邻居状态
         for i in range(self.limit_neighbors):
@@ -167,17 +169,20 @@ class MultiAgentEnv:
         
         return np.array(obs, dtype=np.float32)
 
-    def _compute_freq_histogram(self, n_bins: int = 20) -> np.ndarray:
+    def _compute_freq_histogram(self, n_bins: int = None) -> np.ndarray:
         """计算已执行 agent 的频率使用直方图（归一化）。
         
         将频率范围 [freq_min+bw/2, freq_max-bw/2] 均匀分为 n_bins 个 bin，
         统计已提交决策的 agent 中各 bin 的频率使用比例。
         
         Args:
-            n_bins: 直方图 bin 数量（与动作空间频率离散数对齐）
+            n_bins: 直方图 bin 数量（默认与动作空间频率离散数对齐）
         Returns:
             (n_bins,) 归一化直方图，和为1（若无已执行agent则全0）
         """
+        if n_bins is None:
+            from config import ACTION_CONFIG
+            n_bins = ACTION_CONFIG["n_freq"]
         freq_lo = self.freq_min + self.bandwidth / 2
         freq_hi = self.freq_max - self.bandwidth / 2
         freq_span = max(1e-6, freq_hi - freq_lo)
@@ -194,6 +199,32 @@ class MultiAgentEnv:
         
         if committed_count > 0:
             hist /= committed_count
+        return hist
+
+    def _compute_all_freq_histogram(self, n_bins: int = None) -> np.ndarray:
+        """计算所有 agent 的频率占用直方图（归一化）。
+        
+        统计场景中所有 UAV 的当前频率分布（不管是否已顺序执行）。
+        这让每个 agent 能看到全局频率拥挤度，即使远处干扰源不在 K 邻居中。
+        """
+        if n_bins is None:
+            from config import ACTION_CONFIG
+            n_bins = ACTION_CONFIG["n_freq"]
+        freq_lo = self.freq_min + self.bandwidth / 2
+        freq_hi = self.freq_max - self.bandwidth / 2
+        freq_span = max(1e-6, freq_hi - freq_lo)
+        
+        hist = np.zeros(n_bins, dtype=np.float32)
+        count = 0
+        for node in self.base_env.nodes.values():
+            freq = node.tx.frequency
+            bin_idx = int((freq - freq_lo) / freq_span * n_bins)
+            bin_idx = int(np.clip(bin_idx, 0, n_bins - 1))
+            hist[bin_idx] += 1.0
+            count += 1
+        
+        if count > 0:
+            hist /= count
         return hist
 
     def reset_commit_state(self):
