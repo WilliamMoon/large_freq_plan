@@ -56,13 +56,16 @@ class MultiAgentEnv:
         return [n[1] for n in neighbors[:limit]]
     
     def get_observations(self) -> Dict[str, np.ndarray]:
-        """获取所有智能体的观测"""
+        """获取所有智能体的观测（统一含schedule信息，维度与 sequential 一致）"""
         observations = {}
+        executed_count = sum(1 for n in self.base_env.nodes.values() if n.commit_index >= 0)
         for node in self.base_env.nodes.values():
             neighbor_nodes = self.get_neighbors(node, limit=self.limit_neighbors)
-            # 构建观测向量（需要在Trainer中的agent处理）
-            # 这里返回一个占位符，实际观测由Trainer中的agent生成
-            obs = self._build_observation(node, neighbor_nodes)
+            obs = self._build_observation(
+                node, neighbor_nodes,
+                include_schedule=True,
+                executed_fraction=executed_count / max(1, self.num_uav),
+            )
             observations[node.node_id] = obs
         return observations
 
@@ -110,17 +113,24 @@ class MultiAgentEnv:
         # 自身载荷状态
         tx = node.tx
         rx = node.rx
+        # SINR 在接收机上计算；tx.peer 即配对的接收机
+        peer_rx = tx.peer if tx.peer else rx
+        sinr_val = peer_rx.sinr if peer_rx and peer_rx.sinr != float('-inf') and peer_rx.sinr != float('inf') else float('-inf')
         obs.extend([
             (tx.power - tx.min_power) / (tx.max_power - tx.min_power),  # 归一化功率
             (tx.frequency - tx.min_frequency) / (tx.max_frequency - tx.min_frequency),  # 归一化频率
-            np.tanh((tx.sinr - tx.threshold) / 10.0) if tx.sinr != float('-inf') else -1.0,  # 归一化SINR
-            (rx.frequency - rx.min_frequency) / (rx.max_frequency - rx.min_frequency)  # 归一化频率
+            np.tanh((sinr_val - peer_rx.threshold) / 10.0) if sinr_val != float('-inf') else -1.0,  # 归一化SINR
+            (rx.frequency - rx.min_frequency) / (rx.max_frequency - rx.min_frequency)  # 接收机归一化频率
         ])
 
         if include_schedule:
             obs.extend([
                 float(np.clip(executed_fraction, 0.0, 1.0)),
             ])
+            # 已执行 agent 的频率使用直方图（归一化）
+            # 让后续 agent 能看到前序决策的频率分布，做更好的频率规避
+            freq_hist = self._compute_freq_histogram()
+            obs.extend(freq_hist.tolist())
         
         # 邻居状态
         for i in range(self.limit_neighbors):
@@ -156,6 +166,35 @@ class MultiAgentEnv:
                     obs.extend([.0, .0])
         
         return np.array(obs, dtype=np.float32)
+
+    def _compute_freq_histogram(self, n_bins: int = 20) -> np.ndarray:
+        """计算已执行 agent 的频率使用直方图（归一化）。
+        
+        将频率范围 [freq_min+bw/2, freq_max-bw/2] 均匀分为 n_bins 个 bin，
+        统计已提交决策的 agent 中各 bin 的频率使用比例。
+        
+        Args:
+            n_bins: 直方图 bin 数量（与动作空间频率离散数对齐）
+        Returns:
+            (n_bins,) 归一化直方图，和为1（若无已执行agent则全0）
+        """
+        freq_lo = self.freq_min + self.bandwidth / 2
+        freq_hi = self.freq_max - self.bandwidth / 2
+        freq_span = max(1e-6, freq_hi - freq_lo)
+        
+        hist = np.zeros(n_bins, dtype=np.float32)
+        committed_count = 0
+        for node in self.base_env.nodes.values():
+            if node.commit_index >= 0:
+                freq = node.tx.frequency
+                bin_idx = int((freq - freq_lo) / freq_span * n_bins)
+                bin_idx = int(np.clip(bin_idx, 0, n_bins - 1))
+                hist[bin_idx] += 1.0
+                committed_count += 1
+        
+        if committed_count > 0:
+            hist /= committed_count
+        return hist
 
     def reset_commit_state(self):
         for node in self.base_env.nodes.values():
@@ -232,10 +271,9 @@ class MultiAgentEnv:
         """计算智能体奖励"""
         rewards = {}
         
-        # 全局奖励 - 基于互扰概率
+        # 全局奖励 - 基于互扰概率（降低量级以稳定训练）
         interference_prob = self.base_env.calc_interf_prob()
-        # 全局项鼓励整体互扰概率下降
-        global_reward = -200.0 * interference_prob
+        global_reward = -20.0 * interference_prob
 
         sinr_high_margin = 10.0  # dB above threshold allowed without extra penalty
         sinr_high_lambda = 2.0   # penalty weight for excessive SINR
@@ -269,6 +307,41 @@ class MultiAgentEnv:
             rewards[node.node_id] = reward
         return rewards
     
+    def load_layout(self, layout: dict) -> Dict[str, np.ndarray]:
+        """加载固定布局，用于公平评估。layout 格式: {positions: [...], pairing: [[tx_idx, rx_idx], ...]}"""
+        self.base_env.reset()
+        positions = layout["positions"]
+        for idx, pos in enumerate(positions):
+            node = Node(node_id=f"uav{idx}", position=tuple(pos))
+            node._add_payloads()
+            self.base_env.add_node(node)
+        self._apply_spectrum_limits()
+
+        # 加载固定配对
+        pairing = layout.get("pairing", [])
+        for tx_idx, rx_idx in pairing:
+            tx_node = self.base_env.nodes[f"uav{tx_idx}"]
+            rx_node = self.base_env.nodes[f"uav{rx_idx}"]
+            tx_node.tx.set_peer(rx_node.rx)
+
+        # 随机初始化载荷参数（评估时会被具体方法覆盖）
+        self._random_initialize_payloads()
+        self.base_env.update_sinr()
+        self.reset_commit_state()
+        self.interference_prob_history.clear()
+        self.episode_rewards.clear()
+        return self.get_observations()
+
+    @property
+    def obs_dim(self) -> int:
+        """返回单agent观测维度（含schedule信息）"""
+        return len(self._build_observation(
+            list(self.base_env.nodes.values())[0],
+            self.get_neighbors(list(self.base_env.nodes.values())[0], limit=self.limit_neighbors),
+            include_schedule=True,
+            executed_fraction=0.0,
+        ))
+
     def reset(self) -> Dict[str, np.ndarray]:
         """重置环境"""
         # 重置环境

@@ -1,15 +1,25 @@
-.vscode
-.pyc
-__pycache__
-*.log*
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
 
-*.png
-*.pth
-*.pt
-*.pkl
+# IDE
+.vscode/
+.idea/
 
-temp/
-*.csv
-*.json
-*.npy
-*/tb/
+# CodeBuddy
+.codebuddy/
+
+# Results & checkpoints (实验产物，不提交)
+results/
+checkpoints/
+eval_layouts/
+cgreedy_*/
+*.log
+*.txt
+
+# OS
+Thumbs.db
+.DS_Store
