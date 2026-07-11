@@ -1,7 +1,8 @@
-"""用 BC/IQL 模型在动态环境下评估。
+"""用 MADDPG 模型在动态环境下评估（独立脚本，避免改动 eval_dynamic_marl.py）。
 
-将训练好的 BC 模型部署到 DynamicMultiAgentEnv 上，
-每个时隙用策略推理出频率/功率选择，不随拓扑变化重新训练。
+协议与 eval_dynamic_marl.py 保持一致：每个时隙顺序决策，策略用 actor 输出的
+(power, freq) logits 取 argmax，再归一化到 [-1,1] 喂给 DynamicMultiAgentEnv。
+输出 JSON 格式与 eval_dynamic_marl.py 完全对齐，便于 Fig1/Fig2/Table 统一读取。
 """
 import argparse
 import json
@@ -9,29 +10,23 @@ import os
 import time
 import numpy as np
 import torch
-from typing import Dict, List
+from typing import Dict
 
-from config import ENV_CONFIG, ACTION_CONFIG, RESULTS_DIR, CHECKPOINT_DIR, LoggerSingleton
+from config import ENV_CONFIG, RESULTS_DIR, CHECKPOINT_DIR, LoggerSingleton
 from dynamic_env import DynamicMultiAgentEnv
-from iql_trainer import IQLTrainer
-from bc_trainer import BCTrainer
-from carlton_trainer import CarltonTrainer
+from maddpg_trainer import MADDPGTrainer
 
 logger = LoggerSingleton.get_instance()
 
 
-def make_policy_fn(trainer, method: str = "bc"):
-    """创建动态评估的策略回调函数。"""
-    # 并行推理口径：真实部署中所有 UAV 同时推理，一轮推理完成时间 = 最慢单个 UAV 的前向耗时。
-    # holder["slot_inference_s"] 记录最近一个时隙的并行推理用时（各 agent 前向耗时的最大值）。
+def make_policy_fn(trainer):
+    """MADDPG 的动态评估策略：actor argmax（评估模式），结果归一化。"""
     holder = {"slot_inference_s": 0.0}
 
     def policy_fn(env: DynamicMultiAgentEnv) -> Dict[str, np.ndarray]:
-        """每个时隙调用：用顺序决策为所有 UAV 选择动作。"""
         env.reset_commit_state()
         node_ids = list(env.base_env.nodes.keys())
-        # 评估时固定顺序
-        ordered_ids = node_ids  # 不打乱
+        ordered_ids = node_ids  # 评估时固定顺序
 
         actions = {}
         agent_inf_times = []
@@ -41,16 +36,13 @@ def make_policy_fn(trainer, method: str = "bc"):
 
             t0 = time.time()
             with torch.no_grad():
-                q_values = trainer.q_net(obs_t)
+                power_logits, freq_logits = trainer.actor(obs_t)
+                power_idx = int(power_logits.argmax(dim=-1).item())
+                freq_idx = int(freq_logits.argmax(dim=-1).item())
             agent_inf_times.append(time.time() - t0)
 
-            action_idx = int(q_values.argmax(dim=-1).item())
-
-            # 转换为归一化动作
-            p_idx = action_idx // trainer.n_freq
-            f_idx = action_idx % trainer.n_freq
-            power_val = float(trainer.power_levels[p_idx])
-            freq_val = float(trainer.freq_levels[f_idx])
+            power_val = float(trainer.power_levels[power_idx])
+            freq_val = float(trainer.freq_levels[freq_idx])
 
             freq_lo = ENV_CONFIG["freq_min"] + ENV_CONFIG["bandwidth"] / 2
             freq_span = ENV_CONFIG["freq_max"] - ENV_CONFIG["freq_min"] - ENV_CONFIG["bandwidth"]
@@ -61,7 +53,6 @@ def make_policy_fn(trainer, method: str = "bc"):
             env.apply_sequential_action(agent_id, normalized, commit_index=exec_idx)
             actions[agent_id] = normalized
 
-        # 真实部署中所有 UAV 并行推理：本轮推理用时取最慢单个 agent 的前向耗时。
         holder["slot_inference_s"] = max(agent_inf_times) if agent_inf_times else 0.0
         return actions
 
@@ -70,49 +61,42 @@ def make_policy_fn(trainer, method: str = "bc"):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="MARL动态场景评估")
-    parser.add_argument("--ckpt", type=str, required=True, help="模型checkpoint路径")
-    parser.add_argument("--method", type=str, default="bc", choices=["bc", "iql", "carlton"])
+    parser = argparse.ArgumentParser(description="MADDPG 动态场景评估")
+    parser.add_argument("--ckpt", type=str, required=True, help="MADDPG checkpoint 路径")
     parser.add_argument("--num_uav", type=int, default=10)
     parser.add_argument("--num_slots", type=int, default=50)
     parser.add_argument("--uav_speed", type=float, default=20.0)
     parser.add_argument("--num_episodes", type=int, default=10)
     parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument("--area_size", type=float, default=None, help="区域大小（默认使用ENV_CONFIG值）")
+    parser.add_argument("--area_size", type=float, default=None)
     parser.add_argument("--output", type=str, default=os.path.join(RESULTS_DIR, "dynamic_marl"))
-    parser.add_argument("--speeds", type=float, nargs="+", default=[0, 10, 20, 30, 40],
-                        help="UAV speeds to evaluate (m/s)")
+    parser.add_argument("--speeds", type=float, nargs="+", default=[0, 10, 20, 30, 40])
+    parser.add_argument("--gpu", type=int, default=4, help="GPU 编号 (1-5)")
     args = parser.parse_args()
+
+    assert args.gpu >= 1, "禁止使用 GPU 0"
+    os.environ["CUDA_VISIBLE_DEVICES"] = str(args.gpu)
+    device = "cuda:0" if torch.cuda.is_available() else "cpu"
 
     os.makedirs(args.output, exist_ok=True)
     np.random.seed(args.seed)
     torch.manual_seed(args.seed)
 
-    device = "cuda:0" if torch.cuda.is_available() else "cpu"
     area_size = args.area_size or ENV_CONFIG["area_size"]
-
-    # 加载模型
     ckpt = torch.load(args.ckpt, map_location=device, weights_only=False)
     obs_dim = ckpt["obs_dim"]
 
-    if args.method == "bc":
-        trainer = BCTrainer(num_uav=args.num_uav, obs_dim=obs_dim, device=device)
-    elif args.method == "carlton":
-        trainer = CarltonTrainer(num_uav=args.num_uav, obs_dim=obs_dim, device=device)
-    else:
-        trainer = IQLTrainer(num_uav=args.num_uav, obs_dim=obs_dim, device=device)
+    trainer = MADDPGTrainer(num_uav=args.num_uav, obs_dim=obs_dim, device=device)
     trainer.load(args.ckpt)
 
-    policy_fn = make_policy_fn(trainer, args.method)
+    policy_fn = make_policy_fn(trainer)
 
-    # 运行多组速度
     speeds = args.speeds
     all_results = {}
 
     for speed in speeds:
-        logger.info(f"\n=== {args.method.upper()} speed={speed}m/s ===")
+        logger.info(f"\n=== MADDPG speed={speed}m/s ===")
         episode_results = []
-
         for ep in range(args.num_episodes):
             env = DynamicMultiAgentEnv(
                 num_uav=args.num_uav,
@@ -127,12 +111,9 @@ def main():
             slot_probs = []
             inference_times = []
             done = False
-
             while not done:
-                # 顺序执行评估，但推理耗时按并行口径记录：每时隙取最慢单个 UAV 的前向耗时。
                 actions = policy_fn(env)
                 inference_times.append(policy_fn.slot_inference_time["slot_inference_s"])
-
                 obs, rewards, info, done = env.step(actions)
                 slot_probs.append(info["interference_prob"])
 
@@ -146,9 +127,6 @@ def main():
                 "avg_inference_time_per_slot_s": total_inference / len(slot_probs),
             })
 
-            if (ep + 1) % 5 == 0:
-                logger.info(f"  ep {ep+1}: cum_P_int={cum_prob:.4f}, parallel_infer={total_inference:.4f}s")
-
         cum_probs = [r["cumulative_interf_prob"] for r in episode_results]
         infer_times = [r["total_inference_time_s"] for r in episode_results]
         all_results[f"speed_{speed}"] = {
@@ -158,26 +136,24 @@ def main():
             "avg_total_inference_time_s": float(np.mean(infer_times)),
             "episodes": episode_results,
         }
-        logger.info(f"  {args.method.upper()} speed={speed}: P_int={np.mean(cum_probs):.4f}±{np.std(cum_probs):.4f}, "
-                   f"parallel_infer={np.mean(infer_times):.4f}s")
+        logger.info(f"  MADDPG speed={speed}: P_int={np.mean(cum_probs):.4f}±{np.std(cum_probs):.4f}")
 
-    # 保存
     ckpt_name = os.path.basename(args.ckpt).replace(".pt", "")
-    output_file = os.path.join(args.output, f"dynamic_{args.method}_{ckpt_name}.json")
+    output_file = os.path.join(args.output, f"dynamic_maddpg_{ckpt_name}.json")
     with open(output_file, "w") as f:
         json.dump({
-            "config": {"num_uav": args.num_uav, "num_slots": args.num_slots, "num_episodes": args.num_episodes},
+            "config": {"num_uav": args.num_uav, "num_slots": args.num_slots,
+                       "num_episodes": args.num_episodes},
             "ckpt": args.ckpt,
             "results": all_results,
         }, f, indent=2, ensure_ascii=False)
     logger.info(f"\n结果保存至 {output_file}")
 
-    # 打印汇总对比
-    logger.info(f"\n{'='*60}\n{args.method.upper()} 动态场景汇总\n{'='*60}")
+    logger.info(f"\n{'='*60}\nMADDPG 动态场景汇总\n{'='*60}")
     for speed in speeds:
         r = all_results[f"speed_{speed}"]
-        logger.info(f"  speed={speed:2.0f}m/s: P_int={r['cum_interf_prob_mean']:.4f}±{r['cum_interf_prob_std']:.4f}, "
-                   f"infer={r['avg_total_inference_time_s']:.3f}s")
+        logger.info(f"  speed={speed:.0f}m/s: P_int={r['cum_interf_prob_mean']:.4f}"
+                    f"±{r['cum_interf_prob_std']:.4f}, infer={r['avg_total_inference_time_s']:.3f}s")
 
 
 if __name__ == "__main__":

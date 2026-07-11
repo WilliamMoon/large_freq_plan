@@ -78,16 +78,17 @@ class BCTrainer:
             ((freq - freq_lo) / freq_span) * 2 - 1,
         ], dtype=np.float32)
     
-    def collect_expert_data(self, num_episodes: int) -> List[Tuple[np.ndarray, int]]:
+    def collect_expert_data(self, num_episodes: int, area_size: float = None) -> List[Tuple[np.ndarray, int]]:
         """用 greedy-sequential 收集专家轨迹。
         
         Returns:
             list of (obs, expert_action_idx)
         """
+        _area = area_size or ENV_CONFIG["area_size"]
         env = MultiAgentEnv(
             num_uav=self.num_uav,
             observation_radius=ENV_CONFIG["observation_radius"],
-            area_size=ENV_CONFIG["area_size"],
+            area_size=_area,
             limit_neighbors=ENV_CONFIG["limit_neighbors"],
         )
         

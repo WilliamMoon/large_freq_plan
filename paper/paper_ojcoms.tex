@@ -1,0 +1,199 @@
+% =============================================================================
+%  IEEE Open Journal of the Communications Society (OJ-COMS) framework
+%  Compile: pdflatex -> bibtex -> pdflatex x2  (requires IEEEtran.cls)
+%  NOTE: this is a FRAMEWORK. Section bodies are stubbed with guidance notes.
+% =============================================================================
+\documentclass[journal]{IEEEtran}
+
+% --- essential packages ------------------------------------------------------
+\usepackage[pdftex]{graphicx}
+\usepackage{amsmath,amssymb,amsfonts}
+\usepackage{algorithmic}
+\usepackage{array}
+\usepackage{textcomp}
+\usepackage{url}
+\usepackage{color}
+\usepackage{xcolor}
+\def\BibTeX{{\rm B\kern-.05em{\sc i\kern-.025em b}\kern-.08em T\kern-.1667em\lower.7ex\hbox{E}\kern-.125emX}}
+\hyphenation{op-tical net-works semi-conduc-tor}
+
+% --- draft todo marker -------------------------------------------------------
+\newcommand{\todo}[1]{\textcolor{red}{[TODO: #1]}}
+
+\begin{document}
+
+% =============================================================================
+% TITLE BLOCK
+% =============================================================================
+\title{SINR-Aware Distributed Dynamic Channel Allocation for UAV Swarm
+Communications via Behavior Cloning}
+
+\author{
+  % Fill in real authors / affiliations per IEEE OJ-COMS author guidelines.
+  % OJ-COMS uses the standard IEEE author block (single column, centered).
+  Author~One,~\IEEEmembership{Member,~IEEE,}
+  Author~Two,~\IEEEmembership{Senior~Member,~IEEE,}
+  and~Author~Three,~\IEEEmembership{Fellow,~IEEE}%
+  \thanks{Manuscript received ...; revised ...; accepted ....}
+  \thanks{A.~One and B.~Two are with the Department of ...,
+    (e-mail: ...).}
+  \thanks{C.~Three is with ....}
+  \thanks{Color versions of one or more figures in this article are available
+    online at http://ieeexplore.ieee.org.}
+  \thanks{Digital Object Identifier 10.1109/OJCOMS.2026.xxxxxx}
+}
+
+% The paper headers (IEEEtran journal mode)
+\markboth{Journal of \LaTeX\ Class Files,~Vol.~XX, No.~X, Month~2026}%
+{Author \MakeLowercase{\textit{et~al.}}: OJ-COMS Framework}
+
+% =============================================================================
+% ABSTRACT + INDEX TERMS
+% =============================================================================
+\maketitle
+
+\begin{abstract}
+\todo{Write a 150--200 word abstract: problem (dynamic distributed channel
+allocation for UAV swarms under mutual interference), gap (from-scratch DRL
+fails to learn in this high-dimensional, credit-assignment-hard setting),
+method (SINR-aware observation + greedy-sequential teacher + behavior cloning
+with speed-domain randomization), key results (BC outperforms from-scratch DRL
+by up to Xx, matches/beats periodic greedy without needing global CSI,
+generalizes zero-shot across scales).}
+\end{abstract}
+
+\begin{IEEEkeywords}
+UAV swarm communications, distributed channel allocation, behavior cloning,
+deep reinforcement learning, interference management, dynamic spectrum access.
+\end{IEEEkeywords}
+
+% =============================================================================
+% I. INTRODUCTION
+% =============================================================================
+\section{Introduction}
+\label{sec:intro}
+
+\subsection{Motivation}
+\todo{Why UAV swarm comms need fast, distributed, interference-aware channel
+allocation. Dynamic topology / mobility / mutual interference. Limitations of
+centralized control under mobility.}
+
+\subsection{Related Work}
+\todo{Centralized allocation; distributed heuristics (graph coloring, JAR);
+from-scratch multi-agent DRL (IQL, MADDPG, CARLTON). What is missing: DRL fails
+here; no imitation-based solution.}
+
+\subsection{Limitations of Existing Approaches}
+\todo{From-scratch DRL: credit assignment + sample inefficiency + exploration
+collapse under global interference reward. Heuristics: need global CSI or
+suboptimal. Centralized: not deployable on mobile UAVs.}
+
+\subsection{Our Approach and Contributions}
+\todo{List 3--4 bullet contributions:
+(1) SINR-aware decentralized observation design;
+(2) greedy-sequential teacher that provides near-optimal expert actions without
+global search;
+(3) behavior cloning + speed-domain randomization for dynamic deployment;
+(4) extensive comparison showing BC >> from-scratch DRL and competitive with
+centralized upper bound, plus zero-shot cross-scale generalization.}
+
+% =============================================================================
+% II. SYSTEM MODEL AND PROBLEM FORMULATION
+% =============================================================================
+\section{System Model and Problem Formulation}
+\label{sec:model}
+
+\subsection{UAV Swarm Communication Model}
+\todo{Network of N UAVs, shared spectrum, channels, power levels, SINR model.}
+
+\subsection{Interference Model}
+\todo{Mutual interference probability, SINR expression, collision definition.}
+
+\subsection{Dynamic Scenario}
+\todo{Mobility model, speeds v in {0,10,20,30,40} m/s, time-slotted decisions.}
+
+\subsection{Multi-Agent MDP Formulation}
+\todo{State (local SINR/observation), action (channel+power), reward
+(interference-aware), decentralized execution assumption.}
+
+\subsection{Problem Formulation}
+\todo{Minimize cumulative interference probability P_int subject to
+distributed-execution constraint. Define the optimization objective.}
+
+% =============================================================================
+% III. PROPOSED METHOD
+% =============================================================================
+\section{Proposed Method}
+\label{sec:method}
+
+\subsection{Framework Overview}
+\todo{Two-phase: centralized training (teacher + BC) -> distributed deployment.
+Block diagram figure.}
+
+\subsection{Observation Design}
+\todo{SINR-aware local observation vector; why it helps credit assignment.}
+
+\subsection{Greedy-Sequential Teacher}
+\todo{How the expert generates near-optimal actions sequentially; acts as
+upper-bound reference and label source.}
+
+\subsection{BC Training}
+\todo{Behavior cloning loss, network, single-variable: speed-domain
+randomization (--train_speeds) to remove OOD degradation at high mobility.}
+
+\subsection{Dynamic Deployment}
+\todo{Distributed inference at test time, no global CSI, per-slot decisions.}
+
+% =============================================================================
+% IV. SIMULATION RESULTS
+% =============================================================================
+\section{Simulation Results}
+\label{sec:results}
+
+\subsection{Experimental Setup}
+\todo{Environment params, N in {10,20,30,50}, speeds, baselines (Random,
+Dist-Color, Periodic Greedy, CARLTON, IQL, MADDPG, Centralized BC), metrics.}
+
+\subsection{Main Results: Dynamic Scenario}
+\todo{Fig.1 + Fig.2: BC vs from-scratch DRL vs heuristics across speeds.}
+\subsubsection{Key Observations}
+\todo{(1) BC >> from-scratch DRL; (2) MADDPG collapses; (3) periodic greedy
+comparable but needs global CSI; (4) BC needs no global CSI.}
+
+\subsection{Scale Comparison}
+\todo{Table across N=10/20/30/50; BC stays best, centralized BC upper bound
+degrades with N.}
+
+\subsection{Zero-Shot Cross-Scale Generalization}
+\todo{BC trained at N=10 generalizes to N=30 (even beats dedicated N=30
+centralized BC).}
+
+\subsection{Ablation Studies}
+\todo{Effect of speed-domain randomization (s10 vs multi-speed ms); effect of
+observation design; teacher quality.}
+
+\subsection{Performance--Computation Trade-off}
+\todo{Fig.2 scatter: BC low-latency vs periodic greedy high per-round compute
+that scales poorly with N.}
+
+\subsection{Limitations}
+\todo{Honest discussion: BC depends on teacher quality; assumptions; failure
+modes at extreme scale.}
+
+% =============================================================================
+% V. CONCLUSION
+% =============================================================================
+\section{Conclusion}
+\label{sec:conclusion}
+\todo{Summarize: imitation (BC) is the right paradigm for this setting where
+from-scratch DRL fails; distributed, SINR-aware, mobility-robust; future work
+(online refinement, heterogeneous UAVs, real hardware).}
+
+% =============================================================================
+% REFERENCES
+% =============================================================================
+% OJ-COMS uses IEEEtran.bst. Run: pdflatex -> bibtex -> pdflatex x2
+\bibliographystyle{IEEEtran}
+\bibliography{paper_ojcoms}
+
+\end{document}

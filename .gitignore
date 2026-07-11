@@ -14,6 +14,7 @@ build/
 
 # Results & checkpoints (实验产物，不提交)
 results/
+results_data/
 checkpoints/
 eval_layouts/
 cgreedy_*/
@@ -23,3 +24,10 @@ cgreedy_*/
 # OS
 Thumbs.db
 .DS_Store
+
+# Build artifacts & binaries (not source, regenerable)
+*.pdf
+*.synctex.gz
+paper/figures/
+tmp_*.py
+paper/paper_v2.bbl

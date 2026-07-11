@@ -18,15 +18,21 @@ logger = LoggerSingleton.get_instance()
 
 
 def make_policy_fn(trainer):
+    # 并行推理口径：真实部署中所有 UAV 同时推理，一轮推理完成时间 = 最慢单个 UAV 的前向耗时。
+    holder = {"slot_inference_s": 0.0}
+
     def policy_fn(env):
         env.reset_commit_state()
         node_ids = list(env.base_env.nodes.keys())
         actions = {}
+        agent_inf_times = []
         for exec_idx, agent_id in enumerate(node_ids):
             obs = env.get_sequential_observation(agent_id, exec_idx)
             obs_t = torch.tensor(obs, dtype=torch.float32, device=trainer.device).unsqueeze(0)
+            t0 = time.time()
             with torch.no_grad():
                 q_values = trainer.q_net(obs_t)
+            agent_inf_times.append(time.time() - t0)
             action_idx = int(q_values.argmax(dim=-1).item())
             p_idx = action_idx // trainer.n_freq
             f_idx = action_idx % trainer.n_freq
@@ -39,7 +45,11 @@ def make_policy_fn(trainer):
             normalized = np.array([power_norm, freq_norm], dtype=np.float32)
             env.apply_sequential_action(agent_id, normalized, commit_index=exec_idx)
             actions[agent_id] = normalized
+        # 真实部署中所有 UAV 并行推理：本轮推理用时取最慢单个 agent 的前向耗时。
+        holder["slot_inference_s"] = max(agent_inf_times) if agent_inf_times else 0.0
         return actions
+
+    policy_fn.slot_inference_time = holder  # type: ignore[attr-defined]
     return policy_fn
 
 
@@ -84,20 +94,20 @@ def main():
             env.reset()
 
             slot_probs = []
-            t_start = time.time()
+            infer_time = 0.0  # 并行口径：各时隙最慢单个 UAV 前向耗时之和
             done = False
             while not done:
                 actions = policy_fn(env)
+                infer_time += policy_fn.slot_inference_time["slot_inference_s"]
                 obs, rewards, info, done = env.step(actions)
                 slot_probs.append(info["interference_prob"])
-            elapsed = time.time() - t_start
 
             cum_prob = float(np.mean(slot_probs))
             episode_probs.append(cum_prob)
-            episode_times.append(elapsed)
+            episode_times.append(infer_time)
 
             if (ep + 1) % 5 == 0:
-                logger.info(f"  N={n} ep {ep+1}: cum_P_int={cum_prob:.4f}, time={elapsed:.2f}s")
+                logger.info(f"  N={n} ep {ep+1}: cum_P_int={cum_prob:.4f}, parallel_infer={infer_time:.4f}s")
 
         avg_prob = float(np.mean(episode_probs))
         std_prob = float(np.std(episode_probs))

@@ -59,12 +59,14 @@ def main():
     parser.add_argument("--num_episodes", type=int, default=10, help="评估episode数")
     parser.add_argument("--replan_intervals", type=int, nargs="+", default=[5, 10])
     parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--area_size", type=float, default=None, help="区域大小（默认使用ENV_CONFIG值）")
     parser.add_argument("--output", type=str, default=os.path.join(RESULTS_DIR, "dynamic_comparison"))
     args = parser.parse_args()
 
     os.makedirs(args.output, exist_ok=True)
     np.random.seed(args.seed)
 
+    area_size = args.area_size or ENV_CONFIG["area_size"]
     methods = ["random", "fixed"] + [f"greedy_periodic_{i}" for i in args.replan_intervals] + ["greedy_per_slot"]
 
     all_results = {}
@@ -78,7 +80,7 @@ def main():
                 num_slots=args.num_slots,
                 uav_speed=args.uav_speed,
                 observation_radius=ENV_CONFIG["observation_radius"],
-                area_size=ENV_CONFIG["area_size"],
+                area_size=area_size,
                 limit_neighbors=ENV_CONFIG["limit_neighbors"],
             )
 
